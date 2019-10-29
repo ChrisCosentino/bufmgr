@@ -20,17 +20,15 @@ public class LRUReplacer extends Replacer{
 	}
 
 	@Override
-	public void update(FrameDesc frame) {
+	public void remove(FrameDesc frame) {
 		Queue<FrameDesc> tempQueue = new LinkedList<>();
-		FrameDesc tempFrame = new FrameDesc();
 		for (int i = 0; i < this.bufferFrames.size(); i++) {
 			if (this.bufferFrames.peek() == frame){
-				tempFrame = this.bufferFrames.remove();
+				this.bufferFrames.remove();
 				continue;
 			}
 			tempQueue.add(this.bufferFrames.remove());
 		}
-		tempQueue.add(tempFrame);
 		this.bufferFrames = tempQueue;
 	}
 

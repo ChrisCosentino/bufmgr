@@ -12,7 +12,7 @@ public abstract class Replacer {
 	private Queue<FrameDesc> bufferFrames = new LinkedList();
 
 	public abstract void insert(FrameDesc frame); //inserts frame
-	public abstract void update(FrameDesc frame); //moves frame to back of queue
+	public abstract void remove(FrameDesc frame); //moves frame to back of queue
 	public abstract FrameDesc chooseVictim() throws Exception; //chooses frame from replacement policy
 	
 	public void removeFromCandidates(PageId pageId) {
