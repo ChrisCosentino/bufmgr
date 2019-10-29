@@ -28,11 +28,15 @@ public class FrameDesc {
 	public void incrementPinCount() {
 		this.pinCount = this.pinCount + 1;
 	}
+	
 	public void decrementPinCount() {
 		
 	}
-	
-	public boolean getDirty() {
+
+	public boolean isDirty() {
 		return this.dirty;
+	}
+	public void setDirty(boolean dirty) {
+		this.dirty = dirty;
 	}
 }

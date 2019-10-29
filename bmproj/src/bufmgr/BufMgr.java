@@ -10,7 +10,7 @@ import global.*;
 public class BufMgr implements GlobalConst{
 	
 
-	private Hashtable hashTable;
+	private Hashtable<PageId, Integer> pageFrameMap;
 	private byte[][] bufPool;
 	private FrameDesc[] frameDesc;
 	private int numBufs;
@@ -28,14 +28,10 @@ public class BufMgr implements GlobalConst{
 
   public BufMgr(int numbufs, String replacerArg) {
 
-	  this.hashTable = new Hashtable();
+	  this.pageFrameMap = new Hashtable<>();
 	  this.numBufs = numbufs;
-	  this.bufPool = new byte[numBufs][MAX_SPACE];
+	  this.bufPool = new byte[numBufs][MINIBASE_PAGESIZE];
 	  this.frameDesc = new FrameDesc[numbufs];
-	  for(int i = 0; i < numBufs; i++) { //populate the frameDesc with 
-		  frameDesc[i] = new FrameDesc();
-	  }
-	  
 	  this.replacer = new LRUReplacer(this);
   }
 
@@ -56,10 +52,38 @@ public class BufMgr implements GlobalConst{
    * @param Page_Id_in_a_DB page number in the minibase.
    * @param page the pointer point to the page.
    * @param emptyPage true (empty page); false (non-empty page)
+ * @throws Exception 
    */
 
-  public void pinPage(PageId pin_pgid, Page page, boolean emptyPage) {
-
+  public void pinPage(PageId pin_pgid, Page page, boolean emptyPage) throws Exception {
+	  
+	  if(pageFrameMap.contains(pin_pgid)) {
+		
+		  int pinNum = pageFrameMap.get(pin_pgid);
+		  if(pinNum < 0) {
+			  throw new HashEntryNotFoundException(null, "BufMgr: Entry not found");
+		  }
+		  
+		  FrameDesc currentFrame = frameDesc[pinNum];
+		  if (currentFrame.getPinCount() == 0) {
+			  this.replacer.remove(currentFrame); //remove from replacement candidates.
+		  }
+		  currentFrame.incrementPinCount();
+		  
+		  
+		  
+	  }else {
+		  FrameDesc newFrame = new FrameDesc() ;
+		  newFrame = replacer.chooseVictim();
+		  
+		  if(newFrame.isDirty()) {
+			  flushPage(newFrame.getPageNum());
+		  }
+		  
+		  newFrame.setPageNum(pin_pgid);
+		  newFrame.incrementPinCount();
+		  newFrame.setDirty(false);
+	  }
   }
 
 
@@ -74,10 +98,29 @@ public class BufMgr implements GlobalConst{
    *
    * @param globalPageId_in_a_DB page number in the minibase.
    * @param dirty the dirty bit of the frame
+ * @throws HashEntryNotFoundException 
+ * @throws PageUnpinnedException 
    */
 
-  public void unpinPage(PageId PageId_in_a_DB, boolean dirty) {
+  public void unpinPage(PageId PageId_in_a_DB, boolean dirty) throws HashEntryNotFoundException, PageUnpinnedException {
+	  int pinNum = pageFrameMap.get(PageId_in_a_DB);
 	  
+	  if(pinNum < 0) {
+		  throw new HashEntryNotFoundException(null, "BufMgr: Entry not found");
+	  }
+	  
+	  FrameDesc currentFrame = frameDesc[pinNum];
+	  
+	  if (currentFrame.getPinCount() <= 0) {
+		  throw new PageUnpinnedException(null, "text");
+	  }
+	  
+	  currentFrame.decrementPinCount();
+	  currentFrame.setDirty(dirty);
+	  
+	  if (currentFrame.getPinCount() == 0) {
+		  this.replacer.insert(currentFrame);
+	  }
   }
 
 
@@ -94,10 +137,27 @@ public class BufMgr implements GlobalConst{
    * @param howmany total number of allocated new pages.
    *
    * @return the first page id of the new pages.  null, if error.
+ * @throws IOException 
+ * @throws DiskMgrException 
+ * @throws FileIOException 
+ * @throws InvalidPageNumberException 
+ * @throws InvalidRunSizeException 
    */
 
-  public PageId newPage(Page firstpage, int howmany) {
-	  return new PageId();
+  public PageId newPage(Page firstpage, int howmany) throws InvalidRunSizeException, InvalidPageNumberException, FileIOException, DiskMgrException, IOException {
+	  
+	  PageId pageId = new PageId();
+	  try {
+		  SystemDefs.JavabaseDB.allocate_page(pageId, howmany);
+		  pinPage(pageId, firstpage, true);
+	  }catch(Exception e) {
+		  for(int i = 0; i < howmany; i++) {
+			  pageId.pid++;
+			  SystemDefs.JavabaseDB.deallocate_page(pageId);
+		  }
+		  return null;
+	  }
+	  return pageId;
   }
 
         
@@ -110,6 +170,10 @@ public class BufMgr implements GlobalConst{
    */
 
   public void freePage(PageId globalPageId) {
+	  int frameNum = pageFrameMap.get(globalPageId);
+	  if(frameNum != INVALID_PAGE) {
+		  
+	  }
 	  
   }
 
@@ -140,7 +204,7 @@ public class BufMgr implements GlobalConst{
    */
 
   public int getNumBuffers() {
-	  return 0;
+	  return this.numBufs;
   }
 
 
