@@ -1,34 +1,56 @@
 package bufmgr;
 
+import java.util.LinkedList;
 import java.util.Queue;
 
 import global.PageId;
 
 public class LRUReplacer extends Replacer{
-	private Queue<FrameDesc> candidates;
-	
-	private BufMgr bufmgr;
+
+	private BufMgr bufMgr;
+	private Queue<FrameDesc> bufferFrames = new LinkedList<>();
 	
 	public LRUReplacer(BufMgr bufmgr) {
-		this.bufmgr = bufmgr;
+		this.bufMgr = bufmgr;
 	}
 
 	@Override
-	public int chooseVictim() throws Exception {
-	
-		return 0;
+	public void insert(FrameDesc frame) {
+		this.bufferFrames.add(frame);
 	}
 
 	@Override
-	public void updateCandidatesPinned(PageId pageId) {
-		
-		
+	public void update(FrameDesc frame) {
+		Queue<FrameDesc> tempQueue = new LinkedList<>();
+		FrameDesc tempFrame = new FrameDesc();
+		for (int i = 0; i < this.bufferFrames.size(); i++) {
+			if (this.bufferFrames.peek() == frame){
+				tempFrame = this.bufferFrames.remove();
+				continue;
+			}
+			tempQueue.add(this.bufferFrames.remove());
+		}
+		tempQueue.add(tempFrame);
+		this.bufferFrames = tempQueue;
 	}
 
+	//returns the index of the frame for the replacement policy / only run when page is NOT in the buffer pool
 	@Override
-	public void updateCandidatesUnpinned(PageId pageId) {
-		
-		
+	public FrameDesc chooseVictim() throws Exception {
+		int numBuffers = this.bufMgr.getNumBuffers();
+		int frameCount = this.getFrameCount();
+
+		if (frameCount < numBuffers) {
+			FrameDesc newFrame = new FrameDesc();
+			this.bufferFrames.add(newFrame);
+			return newFrame;
+		}
+
+		return bufferFrames.remove();
+	}
+
+	public int getFrameCount(){
+		return this.bufferFrames.size();
 	}
 
 }
