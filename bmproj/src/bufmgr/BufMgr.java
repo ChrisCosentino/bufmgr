@@ -27,7 +27,6 @@ public class BufMgr implements GlobalConst{
    */
 
   public BufMgr(int numbufs, String replacerArg) {
-
 	  this.pageFrameMap = new Hashtable<>();
 	  this.numBufs = numbufs;
 	  this.bufPool = new byte[numBufs][MINIBASE_PAGESIZE];
@@ -58,31 +57,30 @@ public class BufMgr implements GlobalConst{
   public void pinPage(PageId pin_pgid, Page page, boolean emptyPage) throws Exception {
 	  
 	  if(pageFrameMap.contains(pin_pgid)) {
-		
-		  int pinNum = pageFrameMap.get(pin_pgid);
-		  if(pinNum < 0) {
-			  throw new HashEntryNotFoundException(null, "BufMgr: Entry not found");
-		  }
 		  
-		  FrameDesc currentFrame = frameDesc[pinNum];
-		  if (currentFrame.getPinCount() == 0) {
-			  this.replacer.remove(currentFrame); //remove from replacement candidates.
-		  }
+		  FrameDesc currentFrame = frameDesc[pageFrameMap.get(pin_pgid)];
+//		  if (currentFrame.getPinCount() == 0) {
+//			  this.replacer.remove(currentFrame); //remove from replacement candidates.
+//		  }
 		  currentFrame.incrementPinCount();
+		
+	  } else {
+		  FrameDesc victimFrame = new FrameDesc() ;
+		  victimFrame = replacer.chooseVictim();
 		  
-		  
-		  
-	  }else {
-		  FrameDesc newFrame = new FrameDesc() ;
-		  newFrame = replacer.chooseVictim();
-		  
-		  if(newFrame.isDirty()) {
-			  flushPage(newFrame.getPageNum());
+		  int i = Arrays.asList(frameDesc).indexOf(victimFrame);
+		  if (i == -1) {
+			  frameDesc[frameDesc.length+1] = victimFrame;
+			  i = frameDesc.length;
+		  }
+		  if(victimFrame.isDirty()) {
+			  flushPage(victimFrame.getPageNum());
 		  }
 		  
-		  newFrame.setPageNum(pin_pgid);
-		  newFrame.incrementPinCount();
-		  newFrame.setDirty(false);
+		  victimFrame.setPageNum(pin_pgid);
+		  victimFrame.incrementPinCount();
+		  victimFrame.setDirty(false);
+		  pageFrameMap.put(pin_pgid, i);
 	  }
   }
 
@@ -103,23 +101,22 @@ public class BufMgr implements GlobalConst{
    */
 
   public void unpinPage(PageId PageId_in_a_DB, boolean dirty) throws HashEntryNotFoundException, PageUnpinnedException {
-	  int pinNum = pageFrameMap.get(PageId_in_a_DB);
 	  
-	  if(pinNum < 0) {
-		  throw new HashEntryNotFoundException(null, "BufMgr: Entry not found");
-	  }
-	  
-	  FrameDesc currentFrame = frameDesc[pinNum];
-	  
-	  if (currentFrame.getPinCount() <= 0) {
-		  throw new PageUnpinnedException(null, "text");
-	  }
-	  
-	  currentFrame.decrementPinCount();
-	  currentFrame.setDirty(dirty);
-	  
-	  if (currentFrame.getPinCount() == 0) {
-		  this.replacer.insert(currentFrame);
+	  if(pageFrameMap.containsKey(PageId_in_a_DB)) {
+		  int frameID = pageFrameMap.get(PageId_in_a_DB);
+		  
+		  if(frameDesc[frameID].getPinCount() == 0) {
+			  throw new PageUnpinnedException(null, "");
+		  }
+		  
+		  frameDesc[frameID].decrementPinCount();
+		  frameDesc[frameID].setDirty(dirty);
+		  
+		  if (frameDesc[frameID].getPinCount() == 0) {
+			  this.replacer.insert(frameDesc[frameID]);
+		  }
+	  }else {
+		  throw new HashEntryNotFoundException(null, "");
 	  }
   }
 
@@ -150,12 +147,10 @@ public class BufMgr implements GlobalConst{
 	  try {
 		  SystemDefs.JavabaseDB.allocate_page(pageId, howmany);
 		  pinPage(pageId, firstpage, true);
+		  
 	  }catch(Exception e) {
-		  for(int i = 0; i < howmany; i++) {
-			  pageId.pid++;
 			  SystemDefs.JavabaseDB.deallocate_page(pageId);
-		  }
-		  return null;
+			  e.printStackTrace();
 	  }
 	  return pageId;
   }
@@ -167,14 +162,33 @@ public class BufMgr implements GlobalConst{
    * deallocate the page. 
    *
    * @param globalPageId the page number in the data base.
+ * @throws PagePinnedException 
+ * @throws PageUnpinnedException 
+ * @throws HashEntryNotFoundException 
    */
 
-  public void freePage(PageId globalPageId) {
+  public void freePage(PageId globalPageId) throws PagePinnedException, HashEntryNotFoundException, PageUnpinnedException {
 	  int frameNum = pageFrameMap.get(globalPageId);
-	  if(frameNum != INVALID_PAGE) {
-		  
+	  
+	  if (!pageFrameMap.contains(globalPageId)) {
+		  return;
 	  }
 	  
+	  if (frameDesc[frameNum].getPinCount() > 0) {
+		  throw new PagePinnedException(null, "");
+	  }
+	  
+	  try {
+			if (frameDesc[frameNum].getPinCount() == 1) {
+				this.unpinPage(globalPageId, false);
+			}
+				
+
+			SystemDefs.JavabaseDB.deallocate_page(globalPageId);
+		} catch (InvalidRunSizeException | InvalidPageNumberException
+				| FileIOException | DiskMgrException | IOException e) {
+			e.printStackTrace();
+		}
   }
 
 
@@ -186,6 +200,15 @@ public class BufMgr implements GlobalConst{
    */
 
   public void flushPage(PageId pageid) {
+	  if (!pageFrameMap.contains(pageid)) {
+		  return;
+	  }
+	  frameDesc[pageFrameMap.get(pageid)].setDirty(false);
+	  try {
+		SystemDefs.JavabaseDB.write_page(pageid, new Page(bufPool[pageFrameMap.get(pageid)]));
+	  } catch (InvalidPageNumberException | FileIOException | IOException e) {
+		e.printStackTrace();
+	}
 	  
   }
   
@@ -194,7 +217,11 @@ public class BufMgr implements GlobalConst{
    */
 
   public void flushAllPages() {
-	  
+	  for(int i = 0; i < this.numBufs; i++) {
+		  if(frameDesc[i].isDirty()) {
+			  flushPage(frameDesc[i].getPageNum());
+		  }
+	  }
   }
 
 
@@ -214,8 +241,13 @@ public class BufMgr implements GlobalConst{
    */
 
   public int getNumUnpinnedBuffers() {
-	  return 0;
+	  int j = 0;
+	  for(int i = 0; i < this.numBufs; i++) {
+		  if (frameDesc[i].getPinCount() == 0) {
+			  j++;
+		  }
+	  }
+	  return j;
   }
-
 }
 

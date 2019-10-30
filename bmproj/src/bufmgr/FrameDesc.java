@@ -30,7 +30,7 @@ public class FrameDesc {
 	}
 	
 	public void decrementPinCount() {
-		
+		this.pinCount = this.pinCount - 1;
 	}
 
 	public boolean isDirty() {
